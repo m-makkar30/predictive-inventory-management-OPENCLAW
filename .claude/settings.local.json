@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:console.groq.com)",
+      "WebFetch(domain:docs.openclaw.ai)",
+      "WebFetch(domain:www.datacamp.com)",
+      "WebFetch(domain:zenvanriel.com)",
+      "Bash(npm create:*)",
+      "Bash(npm install:*)",
+      "Bash(npx vite build:*)",
+      "Bash(timeout 5 node:*)",
+      "Bash(node --version:*)",
+      "Bash(openclaw --version:*)",
+      "Bash(export:*)",
+      "Bash(openclaw doctor:*)",
+      "Bash(openclaw config set:*)",
+      "Bash(timeout 10 openclaw gateway:*)",
+      "Bash(chmod:*)"
+    ]
+  }
+}

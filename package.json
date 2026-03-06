@@ -1,0 +1,12 @@
+{
+  "name": "smart-inventory-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI-powered inventory management system using OpenClaw and Groq",
+  "scripts": {
+    "server": "cd server && node index.js",
+    "client": "cd client && npm run dev",
+    "install:all": "npm install && cd server && npm install && cd ../client && npm install",
+    "start": "bash start.sh"
+  }
+}
