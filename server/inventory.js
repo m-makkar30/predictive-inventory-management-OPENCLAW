@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import ITEMS, { ITEMS_MAP } from './items.js';
 import { broadcast } from './websocket.js';
 import { recordDelivery, recordUnitSold, recordUnitExpired, resolveCompletedOrders } from './agentMemory.js';
+import { fileLog } from './fileLogger.js';
 
 // Flag to track if DB is available (set from index.js after DB init)
 let dbReady = false;
@@ -366,6 +367,7 @@ function addLog(type, level, message) {
     eventLog = eventLog.slice(-MAX_LOG_SIZE);
   }
   broadcast('log-event', entry);
+  fileLog(entry);
 }
 
 function broadcastState() {

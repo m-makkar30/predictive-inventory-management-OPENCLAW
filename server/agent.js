@@ -1,13 +1,14 @@
 import { getSnapshot, getDemandHistory, placeProcurementOrder, getEventLog } from './inventory.js';
 import { broadcast } from './websocket.js';
 import { logDecision, buildMemoryContext } from './agentMemory.js';
+import { fileLog } from './fileLogger.js';
 
 // ── Configuration ────────────────────────────────────────────────────
 const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const PRIMARY_MODEL = 'llama-3.3-70b-versatile';
 const FALLBACK_MODEL = 'llama-3.1-8b-instant';
-const AGENT_INTERVAL_MS = 30 * 1000; // 30 seconds between agent calls
+const AGENT_INTERVAL_MS = 20 * 1000; // 20 seconds between agent calls
 
 const OPENCLAW_GATEWAY = 'http://127.0.0.1:18789';
 const WEBHOOK_TOKEN = 'inventory-agent-secret';
@@ -22,7 +23,7 @@ let previousDecisions = [];
 
 // ── System prompt ────────────────────────────────────────────────────
 const SYSTEM_PROMPT = `You are a highly skilled inventory management AI for a real-time grocery warehouse simulation.
-You are called every 30 seconds. Your goal is to keep ALL items in stock while minimizing waste from expiry.
+You are called every 20 seconds. Your goal is to keep ALL items in stock while minimizing waste from expiry.
 
 ## TWO TYPES OF ORDERING:
 
@@ -92,7 +93,7 @@ export function stopAgentLoop() {
 // ── Main trigger ─────────────────────────────────────────────────────
 async function triggerAgentAnalysis() {
   const now = Date.now();
-  if (now - lastAgentCall < 15000) return; // min 15s between calls
+  if (now - lastAgentCall < 10000) return; // min 10s between calls
   lastAgentCall = now;
 
   const snapshot = getSnapshot();
@@ -262,7 +263,7 @@ function buildUserPrompt(snapshot, demandHist, recentLogs, memoryContext = '') {
     : '';
 
   return `CURRENT TIME: ${new Date().toISOString()}
-ANALYSIS INTERVAL: Every 30 seconds
+ANALYSIS INTERVAL: Every 20 seconds
 
 INVENTORY STATUS (sorted by urgency):
 ${itemSummaries}
@@ -396,13 +397,15 @@ async function runFallbackLogic(snapshot) {
 
 // ── Broadcast agent log ──────────────────────────────────────────────
 function addAgentLog(level, message) {
-  broadcast('log-event', {
+  const entry = {
     id: `agent-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
     type: 'agent-reasoning',
     level,
     message,
     timestamp: Date.now(),
-  });
+  };
+  broadcast('log-event', entry);
+  fileLog(entry);
 }
 
 export { triggerAgentAnalysis };

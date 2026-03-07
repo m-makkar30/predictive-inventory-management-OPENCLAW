@@ -81,23 +81,23 @@ const MODES = {
 
   surge: {
     name: 'Surge & Vanish',
-    duration: '5 min (2 min surge + 3 min silence)',
+    duration: '7 min (3 min surge + 4 min silence)',
     description:
-      'Phase 1 (0:00-2:00): Heavy demand on tomatoes and bananas.\n' +
+      'Phase 1 (0:00-3:00): Heavy demand on tomatoes and bananas.\n' +
       '  Orders every 1-2 seconds, 2-4 units each. Simulates a rush.\n' +
-      'Phase 2 (2:00-5:00): Complete silence. No orders at all.\n' +
+      'Phase 2 (3:00-7:00): Complete silence. No orders at all.\n' +
       '  All demand drops to zero instantly.',
     expect:
       'During Phase 1, the agent should ramp up ordering for tomatoes and\n' +
       '  bananas aggressively. When Phase 2 hits, the key test begins:\n' +
       '  the agent should STOP ordering these items once it sees demand vanish.\n' +
-      '  If memory works, by ~3:00 the agent should recognize waste building\n' +
+      '  If memory works, by ~4:00 the agent should recognize waste building\n' +
       '  and cut back to baseline-only. Watch for "partial_waste" or "full_waste"\n' +
       '  outcomes appearing in the decision timeline — the agent should learn\n' +
       '  from these and reduce subsequent order sizes.',
     async run(signal) {
       const surgeItems = ['tomatoes', 'bananas'];
-      const surgeEnd = Date.now() + 2 * 60 * 1000;
+      const surgeEnd = Date.now() + 3 * 60 * 1000;
 
       // Phase 1: Surge
       log('PHASE 1: Surge on tomatoes + bananas');
@@ -118,21 +118,22 @@ const MODES = {
 
   wave: {
     name: 'Rolling Wave',
-    duration: '6 min (4 waves of 90s each)',
+    duration: '12 min (4 waves of 3 min each)',
     description:
-      'Demand rotates across item groups in 90-second cycles:\n' +
-      '  Wave 1 (0:00-1:30): eggs + milk + bread (breakfast rush)\n' +
-      '  Wave 2 (1:30-3:00): chicken + tomatoes + lettuce (lunch prep)\n' +
-      '  Wave 3 (3:00-4:30): yogurt + bananas + cheese (snack time)\n' +
-      '  Wave 4 (4:30-6:00): rice + eggs + chicken (dinner)\n' +
+      'Demand rotates across item groups in 3-minute cycles:\n' +
+      '  Wave 1 (0:00-3:00): eggs + milk + bread (breakfast rush)\n' +
+      '  Wave 2 (3:00-6:00): chicken + tomatoes + lettuce (lunch prep)\n' +
+      '  Wave 3 (6:00-9:00): yogurt + bananas + cheese (snack time)\n' +
+      '  Wave 4 (9:00-12:00): rice + eggs + chicken (dinner)\n' +
       '  Each wave: orders every 2-3s, 1-3 units.',
     expect:
-      'This tests whether the agent adapts to SHIFTING demand. After Wave 1\n' +
-      '  ends, the agent should stop over-ordering breakfast items. The critical\n' +
-      '  signal: by Wave 3-4, the agent should show lower waste rates because\n' +
-      '  it learned from Wave 1-2 outcomes. Watch for items from previous waves\n' +
-      '  accumulating "partial_waste" outcomes — if the agent is learning, later\n' +
-      '  waves should have fewer waste outcomes than earlier ones.',
+      'This tests whether the agent adapts to SHIFTING demand. Each 3-min wave\n' +
+      '  gives the agent ~9 decision cycles with near-instant delivery (~18-30s\n' +
+      '  lead times). After Wave 1 ends, the agent should stop over-ordering\n' +
+      '  breakfast items. By Wave 3-4, the agent should show lower waste rates\n' +
+      '  because it learned from Wave 1-2 outcomes. Watch for items from previous\n' +
+      '  waves accumulating "partial_waste" outcomes — later waves should have\n' +
+      '  fewer waste outcomes than earlier ones.',
     async run(signal) {
       const waves = [
         { label: 'Wave 1: Breakfast rush', items: ['eggs', 'milk', 'bread'] },
@@ -140,7 +141,7 @@ const MODES = {
         { label: 'Wave 3: Snack time', items: ['yogurt', 'bananas', 'cheese'] },
         { label: 'Wave 4: Dinner', items: ['rice', 'eggs', 'chicken'] },
       ];
-      const waveDuration = 90 * 1000;
+      const waveDuration = 180 * 1000;
 
       for (const wave of waves) {
         if (signal.stopped) return;
