@@ -1,5 +1,6 @@
 import { getSnapshot, getDemandHistory, placeProcurementOrder, getEventLog } from './inventory.js';
 import { broadcast } from './websocket.js';
+import { logDecision, buildMemoryContext } from './agentMemory.js';
 
 // ── Configuration ────────────────────────────────────────────────────
 const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
@@ -56,6 +57,12 @@ Even when no one is currently buying an item, a grocery store must keep it stock
 
 5. **SMALL BATCHES FOR PERISHABLES**: Items with expiryTime < 5min should never receive orders larger than 5 units at once when demand is low (<1/min).
 
+6. **LEARN FROM MEMORY**: You will receive your past decision outcomes (units ordered, sold, expired per item).
+   - If your AGENT MEMORY shows high waste_rate (>30%) for an item, CUT your order size for that item by 50%.
+   - If efficiency is >80%, your sizing is good — maintain current approach.
+   - If you see repeated "full_waste" outcomes for an item, switch to baseline-only ordering for it.
+   - Your memory tracks what actually happened after your decisions. USE IT to improve.
+
 ## RESPONSE FORMAT:
 Return ONLY valid JSON. No markdown fences. No text outside JSON.
 {"reasoning":"brief analysis","orders":[{"itemId":"id","quantity":N,"reason":"why"}]}
@@ -91,7 +98,16 @@ async function triggerAgentAnalysis() {
   const snapshot = getSnapshot();
   const demandHist = getDemandHistory(10);
   const recentLogs = getEventLog(30);
-  const userPrompt = buildUserPrompt(snapshot, demandHist, recentLogs);
+
+  // Fetch agent's memory of past decisions and outcomes
+  let memoryContext = '';
+  try {
+    memoryContext = await buildMemoryContext();
+  } catch (err) {
+    console.warn('[Agent] Memory context unavailable:', err.message);
+  }
+
+  const userPrompt = buildUserPrompt(snapshot, demandHist, recentLogs, memoryContext);
 
   // Try direct Groq API
   const success = await callGroqDirect(userPrompt, snapshot);
@@ -102,7 +118,7 @@ async function triggerAgentAnalysis() {
       consecutiveFailures++;
       // Immediately use fallback - don't wait for 2 failures
       addAgentLog('warn', '🔧 FALLBACK: Using rule-based logic');
-      runFallbackLogic(snapshot);
+      await runFallbackLogic(snapshot);
     } else {
       consecutiveFailures = 0;
     }
@@ -156,12 +172,25 @@ async function callGroqDirect(userPrompt, snapshot) {
 
     console.log('[Agent] Response:', content.substring(0, 300));
 
-    const orders = parseAgentDecision(content);
+    const { orders, reasoning } = parseAgentDecision(content);
     if (orders.length > 0) {
-      executeAgentOrders(orders);
+      const ordersWithIds = await executeAgentOrders(orders);
       previousDecisions = orders.map(o => ({ ...o, time: Date.now() }));
+
+      // Log decision to DB
+      const decisionId = await logDecision({
+        tier: 'groq',
+        reasoning,
+        snapshot,
+        orders: ordersWithIds,
+      });
+      if (decisionId) {
+        broadcast('agent-decision', { decisionId, tier: 'groq', orders: ordersWithIds, reasoning });
+      }
     } else {
       addAgentLog('info', '🤖 AGENT: Stock levels adequate, no orders needed');
+      // Log empty decision too
+      await logDecision({ tier: 'groq', reasoning, snapshot, orders: [] });
     }
 
     return true;
@@ -200,7 +229,7 @@ async function callOpenClawWebhook(userPrompt) {
 }
 
 // ── Build prompt with rich demand data ───────────────────────────────
-function buildUserPrompt(snapshot, demandHist, recentLogs) {
+function buildUserPrompt(snapshot, demandHist, recentLogs, memoryContext = '') {
   const BASELINE = 5;
   const itemSummaries = snapshot.items.map(item => {
     const nearExpiry = item.units.filter(u => parseFloat(u.timeToExpiryMin) < 2).length;
@@ -238,13 +267,14 @@ ANALYSIS INTERVAL: Every 30 seconds
 INVENTORY STATUS (sorted by urgency):
 ${itemSummaries}
 ${prevOrdersSummary}
-
+${memoryContext}
 RECENT EVENTS:
 ${recentEvents || '  No recent events'}
 
 ⚡ Items marked EMPTY or BELOW BASELINE need orders even if demand is 0 — keep shelves stocked!
 ⚡ Items marked WILL STOCKOUT need demand-driven orders immediately.
 ⚡ If wasteRatio is high (>0.5), order SMALLER batches — you're over-ordering that item.
+⚡ LEARN FROM YOUR MEMORY: Check your past decision outcomes above. If waste_rate is high for an item, reduce order sizes. If efficiency is high, keep current strategy.
 ⚡ Use the formulas from your instructions. Apply the hard caps strictly.
 
 Decide procurement orders now.`;
@@ -259,38 +289,45 @@ function parseAgentDecision(text) {
     const jsonMatch = text.match(/\{[\s\S]*?"orders"\s*:\s*\[[\s\S]*?\]\s*\}/);
     if (!jsonMatch) {
       console.warn('[Agent] No JSON found in response');
-      return [];
+      return { orders: [], reasoning: null };
     }
 
     const parsed = JSON.parse(jsonMatch[0]);
+    const reasoning = parsed.reasoning || null;
 
-    if (parsed.reasoning) {
-      addAgentLog('info', `🤖 AGENT: ${parsed.reasoning}`);
+    if (reasoning) {
+      addAgentLog('info', `🤖 AGENT: ${reasoning}`);
     }
 
-    if (!Array.isArray(parsed.orders)) return [];
+    if (!Array.isArray(parsed.orders)) return { orders: [], reasoning };
 
-    return parsed.orders.filter(o =>
+    const orders = parsed.orders.filter(o =>
       o.itemId && typeof o.quantity === 'number' && o.quantity > 0 && o.quantity <= 50
     );
+    return { orders, reasoning };
   } catch (err) {
     console.error('[Agent] Parse error:', err.message);
-    return [];
+    return { orders: [], reasoning: null };
   }
 }
 
 // ── Execute orders ───────────────────────────────────────────────────
-function executeAgentOrders(orders) {
+async function executeAgentOrders(orders) {
+  const results = [];
   for (const order of orders) {
     const result = placeProcurementOrder(order.itemId, order.quantity, 'agent');
-    if (!result.success) {
+    if (result.success) {
+      results.push({ ...order, procurementId: result.orderId });
+    } else {
       console.warn(`[Agent] Order failed for ${order.itemId}: ${result.error}`);
+      results.push({ ...order, procurementId: null });
     }
   }
+  return results;
 }
 
 // ── Fallback rule-based logic (smarter version) ──────────────────────
-function runFallbackLogic(snapshot) {
+async function runFallbackLogic(snapshot) {
   const orders = [];
   const BASELINE = 5;
 
@@ -343,7 +380,17 @@ function runFallbackLogic(snapshot) {
 
   if (orders.length > 0) {
     addAgentLog('info', `🔧 FALLBACK: Placing ${orders.length} rule-based orders`);
-    executeAgentOrders(orders);
+    const ordersWithIds = await executeAgentOrders(orders);
+
+    const decisionId = await logDecision({
+      tier: 'fallback',
+      reasoning: `Rule-based: ${orders.length} orders placed`,
+      snapshot,
+      orders: ordersWithIds,
+    });
+    if (decisionId) {
+      broadcast('agent-decision', { decisionId, tier: 'fallback', orders: ordersWithIds });
+    }
   }
 }
 

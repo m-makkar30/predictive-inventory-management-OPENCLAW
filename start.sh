@@ -32,6 +32,19 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# 0. Ensure PostgreSQL is running via Docker
+echo -e "\n${BLUE}[0/3] Starting PostgreSQL...${NC}"
+if command -v docker &>/dev/null; then
+  if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q openclaw-postgres; then
+    docker compose up -d postgres 2>/dev/null || sudo docker compose up -d postgres 2>/dev/null || echo -e "${RED}Docker unavailable — agent memory will be disabled${NC}"
+    sleep 2
+  else
+    echo -e "${GREEN}PostgreSQL already running${NC}"
+  fi
+else
+  echo -e "${RED}Docker not found — agent memory will be disabled (system still works)${NC}"
+fi
+
 # 1. Start OpenClaw Gateway
 echo -e "\n${BLUE}[1/3] Starting OpenClaw Gateway on port 18789...${NC}"
 openclaw gateway --port 18789 &

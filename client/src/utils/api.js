@@ -37,3 +37,11 @@ export function manualProcure(itemId, quantity) {
 export function triggerAgent() {
   return request('/trigger-agent', { method: 'POST' });
 }
+
+export function getAgentDecisions(limit = 20) {
+  return request(`/agent/decisions?limit=${limit}`);
+}
+
+export function getAgentPerformance() {
+  return request('/agent/performance');
+}

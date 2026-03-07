@@ -2,11 +2,11 @@
 
 AI-powered real-time inventory management for a grocery warehouse. An LLM agent ([OpenClaw](https://github.com/openclaw/openclaw) + Groq) watches demand, forecasts stock depletion, and places procurement orders autonomously — minimizing both stockouts and expiry waste.
 
-**Stack**: React 19 / Vite / TailwindCSS | Express / Node 22 / WebSocket | OpenClaw | Groq (`llama-3.3-70b-versatile`)
+**Stack**: React 19 / Vite / TailwindCSS | Express / Node 22 / WebSocket / PostgreSQL | OpenClaw | Groq (`llama-3.3-70b-versatile`)
 
 ## Setup
 
-**Prerequisites:** Node >= 22, npm, a [Groq API key](https://console.groq.com) (free tier works)
+**Prerequisites:** Node >= 22, npm, Docker (for PostgreSQL), a [Groq API key](https://console.groq.com) (free tier works)
 
 ```bash
 # Install dependencies
@@ -63,12 +63,25 @@ The agent uses a **dual ordering strategy**:
 
 The LLM receives **exact formulas** (not vague instructions), **urgency flags** per item (EMPTY / WILL STOCKOUT / BELOW BASELINE / LOW / OK), and **previous order context** to prevent double-ordering.
 
+### Agent Memory (`server/agentMemory.js`)
+
+The agent has persistent memory backed by PostgreSQL. Every decision cycle is logged with the full inventory snapshot, the orders placed, and which tier handled it. As procurement orders deliver, sell, and expire, outcomes are tracked back to the original decision.
+
+**Decision logging** — each agent cycle records: tier used, reasoning text, orders placed, and links to procurement IDs.
+
+**Outcome tracking** — when stock units are sold or expire, they're traced back to the procurement order that created them. Each decision order tracks `quantity_ordered`, `quantity_arrived`, `quantity_sold`, `quantity_expired`, and resolves to an outcome: `fully_sold`, `partial_waste`, or `full_waste`.
+
+**Performance scoring** — every 60 seconds, per-item efficiency (`sold / arrived`) and waste rate (`expired / arrived`) are computed over a rolling window and stored. The agent sees these scores in its prompt and is instructed to adapt: high waste rate triggers smaller orders, high efficiency confirms good sizing.
+
+**Self-improving loop** — the agent's prompt includes its last 5 decisions with outcomes plus per-item performance scores. This creates a feedback loop: order too much -> see waste in memory -> order less next cycle.
+
 ### Web UI (`client/`)
 
 Single-page dark-themed dashboard with three sections:
 - **Order Panel** (left top) — 10 item buttons to simulate customer demand in real time
 - **Activity Log** (left bottom) — color-coded event feed, auto-scrolls to latest, red highlights for stockouts/expirations
-- **Inventory Dashboard** (right) — stock levels, pending orders, demand velocity, waste stats. Click any item for detailed view with per-unit expiry bars, demand charts, and manual procurement controls.
+- **Inventory Dashboard** (center) — stock levels, pending orders, demand velocity, waste stats. Click any item for detailed view with per-unit expiry bars, demand charts, and manual procurement controls.
+- **Agent Memory** (right) — decision timeline showing every agent cycle with expandable cards revealing per-item orders, outcomes (sold/wasted), and reasoning. Performance tab shows per-item efficiency and waste rate bars.
 
 All updates are pushed via WebSocket — no polling.
 
@@ -83,6 +96,8 @@ server/
   index.js        — Express API + background ticks
   inventory.js    — Stock engine, FIFO, expiry, demand analytics
   agent.js        — LLM agent loop, Groq/OpenClaw/fallback
+  agentMemory.js  — Decision logging, outcome tracking, performance scoring
+  db.js           — PostgreSQL connection pool + schema init
   websocket.js    — Real-time broadcast to clients
   items.js        — 10 item configs (lead time, expiry, cost, price)
 
@@ -92,4 +107,5 @@ client/src/
   components/LogPanel.jsx    — Auto-scrolling activity log
   components/InventoryDashboard.jsx — Overview + stats
   components/ItemDetail.jsx  — Per-item detail + charts
+  components/AgentInsights.jsx — Decision history + performance
 ```

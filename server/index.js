@@ -4,6 +4,7 @@ import http from 'http';
 import { initWebSocket } from './websocket.js';
 import {
   initializeInventory,
+  setDbReady,
   placeCustomerOrder,
   placeProcurementOrder,
   getSnapshot,
@@ -13,6 +14,8 @@ import {
   checkExpiredItems,
 } from './inventory.js';
 import { startAgentLoop, triggerAgentAnalysis } from './agent.js';
+import { initDB } from './db.js';
+import { getRecentDecisions, getLatestPerformance, computePerformanceScores } from './agentMemory.js';
 
 const PORT = 3001;
 const app = express();
@@ -74,9 +77,36 @@ app.post('/api/trigger-agent', (req, res) => {
   res.json({ success: true, message: 'Agent analysis triggered' });
 });
 
+// Agent decision history
+app.get('/api/agent/decisions', async (req, res) => {
+  const limit = parseInt(req.query.limit) || 20;
+  const decisions = await getRecentDecisions(limit);
+  res.json(decisions);
+});
+
+// Agent performance scores per item
+app.get('/api/agent/performance', async (req, res) => {
+  const performance = await getLatestPerformance();
+  res.json(performance);
+});
+
 // ── Initialize ───────────────────────────────────────────────────────
 initWebSocket(server);
 initializeInventory();
+
+// Initialize DB (non-blocking — system works without it)
+initDB().then(() => {
+  setDbReady(true);
+  console.log('[Server] Database connected — agent memory active');
+
+  // Compute performance scores every 60 seconds
+  setInterval(() => {
+    computePerformanceScores(10).catch(() => {});
+  }, 60000);
+}).catch(err => {
+  console.warn('[Server] Database unavailable — agent memory disabled:', err.message);
+  console.warn('[Server] System will run normally without persistent memory');
+});
 
 // Run inventory tick every second (check expiry + pending orders)
 setInterval(() => {

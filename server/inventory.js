@@ -1,6 +1,11 @@
 import { v4 as uuidv4 } from 'uuid';
 import ITEMS, { ITEMS_MAP } from './items.js';
 import { broadcast } from './websocket.js';
+import { recordDelivery, recordUnitSold, recordUnitExpired, resolveCompletedOrders } from './agentMemory.js';
+
+// Flag to track if DB is available (set from index.js after DB init)
+let dbReady = false;
+export function setDbReady(ready) { dbReady = ready; }
 
 // ── Per-unit stock tracking ──────────────────────────────────────────
 // Each unit in stock: { unitId, itemId, arrivedAt, expiresAt }
@@ -86,6 +91,19 @@ export function placeCustomerOrder(itemId, quantity = 1) {
   stats.totalSold[itemId] += actualQty;
   stats.totalRevenue += actualQty * item.price;
 
+  // Track sold units back to their procurement orders in DB
+  if (dbReady) {
+    const byProcurement = {};
+    for (const u of sold) {
+      if (u.procurementId) {
+        byProcurement[u.procurementId] = (byProcurement[u.procurementId] || 0) + 1;
+      }
+    }
+    for (const [procId, count] of Object.entries(byProcurement)) {
+      recordUnitSold(procId, count).catch(() => {});
+    }
+  }
+
   // Record demand
   demandHistory.push({ itemId, quantity: actualQty, timestamp: Date.now() });
 
@@ -158,11 +176,17 @@ export function checkPendingOrders() {
         itemId: order.itemId,
         arrivedAt: now,
         expiresAt: now + item.expiryTime * 60000,
+        procurementId: order.orderId,
       });
     }
 
     const sourceLabel = order.source === 'agent' ? '🤖' : '👤';
     addLog('arrival', 'success', `${sourceLabel} ARRIVED: ${order.quantity}x ${item.emoji} ${item.name} now in stock`);
+
+    // Record delivery in agent memory
+    if (dbReady && order.source === 'agent') {
+      recordDelivery(order.orderId, order.quantity).catch(() => {});
+    }
   }
 
   if (arrived.length > 0) broadcastState();
@@ -183,6 +207,21 @@ export function checkExpiredItems() {
   const grouped = {};
   for (const u of expired) {
     grouped[u.itemId] = (grouped[u.itemId] || 0) + 1;
+  }
+
+  // Track expired units back to procurement orders in DB
+  if (dbReady) {
+    const byProcurement = {};
+    for (const u of expired) {
+      if (u.procurementId) {
+        byProcurement[u.procurementId] = (byProcurement[u.procurementId] || 0) + 1;
+      }
+    }
+    for (const [procId, count] of Object.entries(byProcurement)) {
+      recordUnitExpired(procId, count).catch(() => {});
+    }
+    // Resolve any orders where all units are now accounted for
+    resolveCompletedOrders().catch(() => {});
   }
 
   for (const [itemId, count] of Object.entries(grouped)) {

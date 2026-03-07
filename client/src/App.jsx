@@ -4,6 +4,7 @@ import { getInventory, getLogs, getDemandHistory } from './utils/api';
 import OrderPanel from './components/OrderPanel';
 import LogPanel from './components/LogPanel';
 import InventoryDashboard from './components/InventoryDashboard';
+import AgentInsights from './components/AgentInsights';
 import { Wifi, WifiOff } from 'lucide-react';
 
 const WS_URL = `ws://${window.location.hostname}:3001`;
@@ -108,12 +109,17 @@ function App() {
           </div>
         </div>
 
-        {/* Right Panel - Inventory Dashboard (3/4 width) */}
+        {/* Center Panel - Inventory Dashboard */}
         <div className="flex-1 overflow-hidden">
           <InventoryDashboard
             inventory={inventory}
             demandHistory={demandHistory}
           />
+        </div>
+
+        {/* Right Panel - Agent Memory */}
+        <div className="w-[22%] min-w-[260px] border-l border-[#2e3344] overflow-hidden">
+          <AgentInsights wsOn={on} />
         </div>
       </div>
     </div>
