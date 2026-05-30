@@ -2,3 +2,7 @@ node_modules/
 dist/
 .env
 server/logs/*.log
+
+COMMIT_WORKFLOW.md
+create_march_2026_commits.sh
+
